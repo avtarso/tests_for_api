@@ -1,0 +1,59 @@
+sequenceDiagram
+    Actor Manager
+    participant CRM_FRONT
+    participant CRM_BACK
+    participant CRM_DB
+    participant CronScript
+    participant GitHub
+    Actor Developer
+
+    %% Подготовка данных
+    CRM_BACK->>CRM_FRONT: 0. {pibs, labels, milestone}
+    Note over CRM_FRONT: На странице создания задачи<br/>передаются необходимые данные 
+
+    %% Создание задачи
+    Manager->>CRM_FRONT: 1. Создает задачу
+    CRM_FRONT->>CRM_BACK: 2. POST /tasks {данные задачи}
+    CRM_BACK->>CRM_DB: 3. Запись задачи со status="pending_sync",<br/>генерирует crm_task_url
+    CRM_BACK-->>CRM_FRONT: 4. {crm_task_id, title}
+    CRM_FRONT-->>Manager: 5. Задача {title} создана
+
+    %% Кроном каждые 5 минут
+    Note over CronScript: Каждые 5 минут
+    CronScript->>CRM_DB: 6. Запрос задач со status IN ('pending_sync', 'retry')<br/>AND retry_count < 3
+    
+    loop Для каждой задачи
+        %% Проверка по CRM ссылке в GitHub
+        CronScript->>GitHub: 7. GET /issues?filter=all<br/>Поиск в body: "CRM_TASK_URL: {crm_task_url}"
+        
+        alt Задача найдена в GitHub
+            GitHub-->>CronScript: 8. {existing_issue_number}
+            CronScript->>CRM_DB: 9. Обновляет: status="synced",<br/>github_issue=existing_issue_number
+            Note over CronScript: Задача уже была создана<br/>(восстановление после сбоя)
+            
+        else Задача не найдена
+            Note over CronScript: Формирует тело с ссылкой на CRM
+            CronScript->>GitHub: 8. POST /issues {title, body, labels}<br/>body: "...\n\n---\nСоздано через CRM: {crm_task_url}"
+            
+            alt Успех (201 Created)
+                GitHub-->>CronScript: 9. {number, html_url}
+                CronScript->>CRM_DB: 10. status="synced",<br/>github_issue=number, github_url=html_url
+                GitHub-->>Developer: 11. Уведомление о новом issue
+                
+            else Временная ошибка (5xx, 429)
+                GitHub-->>CronScript: 9. Ошибка {status_code}
+                alt retry_count < 3
+                    CronScript->>CRM_DB: 10. retry_count++, status="retry"
+                    Note over CronScript: Попробует через 5 минут
+                else
+                    CronScript->>CRM_DB: 10. status="failed",<br/>last_error="Превышено количество попыток"
+                    CronScript->>Developer: 11. Email: "Не удалось создать задачу в GitHub"
+                end
+                
+            else Фатальная ошибка (4xx)
+                GitHub-->>CronScript: 9. Ошибка {status_code, message}
+                CronScript->>CRM_DB: 10. status="failed",<br/>last_error="GitHub API error: {message}"
+                CronScript->>Developer: 11. Email: "Ошибка синхронизации с GitHub"
+            end
+        end
+    end

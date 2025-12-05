@@ -1,0 +1,52 @@
+sequenceDiagram
+    autonumber
+    participant CRM as CRM
+    participant SVC as Сервис интеграции
+    participant DB as БД Сервиса
+    participant GH as GitHub
+    participant Dev as Developer
+
+    CRM->>SVC: Создать задачу (crm_task_id, crm_payload)
+    SVC->>DB: Проверить crm_task_id
+
+    alt Запись существует
+        DB-->>SVC: issue_id
+        SVC->>GH: PATCH /issues/{issue_id}
+        alt 200 OK
+            GH-->>SVC: OK
+            SVC->>Dev: Обновление задачи в GitHub успешно
+        else Ошибка GitHub
+            GH-->>SVC: Ошибка
+            SVC->>DB: status="failed", last_error
+            SVC->>Dev: Ошибка обновления задачи в GitHub
+        end
+
+    else Нет записи — создаём новую задачу
+        DB-->>SVC: not found
+        SVC->>DB: INSERT status="pending", retry_count=0
+
+        loop Попытка синхронизации (до 3 раз)
+            SVC->>GH: POST /issues (github_payload)
+
+            alt 201 Created
+                GH-->>SVC: issue_number
+                SVC->>DB: status="synced", issue_number
+                SVC->>Dev: Задача создана в GitHub
+
+            else 503 Service Unavailable
+                GH-->>SVC: 503
+                SVC->>DB: retry_count++, status="retry"
+                alt retry_count < 3
+                    SVC->>SVC: Перенос повторной попытки
+                else retry_count >= 3
+                    SVC->>DB: status="final_error", last_error=503
+                    SVC->>Dev: GitHub недоступен, задача не создана
+                end
+            else Критические ошибки (400,403,404,410,422)
+                GH-->>SVC: Ошибка
+                SVC->>DB: status="final_error", last_error
+                SVC->>Dev: Ошибка создания задачи в GitHub<br/>Текст ошибки
+
+            end
+        end
+    end

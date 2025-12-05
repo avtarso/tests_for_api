@@ -1,0 +1,62 @@
+sequenceDiagram
+    autonumber
+    Actor Manager
+    participant CRM_FRONT
+    participant CRM_BACK
+    participant CRM_DB
+    participant CronScript
+    participant GitHub
+    Actor Developer
+
+    %% Подготовка данных (добавить получение и кэширование данных при первом заходе в рабочую область)
+    %% {pib_developers - имена разработчиков, labels - метки репозитория, milestone - вехи репозитория}
+    CRM_BACK->>CRM_FRONT: 0. {pib_developers, labels, milestone}
+    Note over CRM_FRONT: уже есть<br/>необходимые данные<br/>по адресу - репозиторий<br/>по репозиторию - данные
+    %% в этапах выше нет необходимости если у менеджера не предусмотрена возможность выбора разработчиков
+    %% меток репозитория и вехи для задачи. А также если Менеджер может создавать задачи только для одного репозитория.
+
+    %% Создание задачи (для Менеджера визуально остается без изменений)
+    Manager->>CRM_FRONT: 1. Создает задачу<br/>заполняет форму
+    CRM_FRONT->>CRM_BACK: 2. POST /crm_tasks<br/>{данные задачи,<br/>manger_id, task_area_id}
+    CRM_BACK->>CRM_DB: 3. Запись задачи<br/>task_to_github_status="pending_sync"
+    CRM_DB-->>CRM_BACK: 4. (crm_task_id, crm_task_title}
+    CRM_BACK-->>CRM_FRONT: 5. {crm_task_id, crm_task_title}
+    CRM_FRONT-->>Manager: 6. Задача<br/>{crm_task_title}<br/>создана
+
+    %% Основной функционал в скрипте, который запускается по cron каждые 5 минут
+    Note over CronScript: Каждые 5 минут
+    CronScript->>CRM_DB: 5. Запрос: SELECT * FROM tasks<br/>WHERE task_to_github_status IN ('pending_sync', 'retry')<br/>AND task_to_github_retry_count < 3
+    
+    loop Для каждой задачи
+        CronScript->>GitHub: Запрос последней записанной задачи в репозитории
+
+        alt Задача уникальная
+            Note over CronScript: Попытка создания задачи
+            CronScript->>GitHub: 6. POST /issues {данные}
+            
+            alt Успех (201)
+                GitHub-->>CronScript: 7. {number}
+                CronScript->>CRM_DB: 8. task_to_github_status="synced", github_issue=number
+                GitHub-->>Developer: 9. Уведомление от GitHub
+                
+            else Ошибка GitHub (503)
+                GitHub-->>CronScript: 7. Ошибка
+                alt task_to_github_retry_count < 3
+                    CronScript->>CRM_DB: 8. task_to_github_retry_count ++, task_to_github_status="failed", last_error = response body
+                    Note over CronScript: Повторная попытка
+                else
+                    CronScript->>CRM_DB: 8. task_to_github_status="failed, last_error = response body"
+                    Note over CronScript: Ошибка GitHub, отказ отпопыток, уведомление Developer
+                    CronScript->>Developer: 9. Email: "Ошибка GitHub", crm_task_id, crm_task_url, response body
+                end
+                
+            else Критическая ошибка (4ХХ)
+                GitHub-->>CronScript: 7. Ошибка данных
+                CronScript->>CRM_DB: 8. task_to_github_status="failed", last_error=response body
+                CronScript->>Developer: 9. Email: "Ошибка синхронизации" crm_task_id, crm_task_url, response body
+            end
+        else
+            Note over CronScript: Задача уже в GitHub<br />Добавляем в CRM_DB 
+            CronScript->>CRM_DB: 8. task_to_github_status="synced", github_issue=number
+        end
+    end

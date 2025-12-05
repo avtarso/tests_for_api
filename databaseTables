@@ -1,0 +1,15 @@
+developers
+developer_id | github_login | full_name 
+
+managers
+manager_id | gitHub_token | full_name
+
+repositories
+repo_id | repo | owner
+
+projects_repo
+crm_area_id | repo_id
+
+repo_devs
+repo_id | developer_id
+

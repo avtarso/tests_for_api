@@ -1,0 +1,24 @@
+crm_payload
+{
+    "crm_task_id": 41,
+    "manager_id": 4,
+    "crm_area_id": 12,
+    "crm_task_title": "Ошибка авторизации",
+    "crm_task_body": "Пользователь не может войти", 
+    "assignee": "developer1",
+    "milestone": 2,
+    "labels": ["bug"]
+}
+
+
+github_payload
+{
+  "title": "[CRM-41] Ошибка авторизации",
+  "body": "Пользователь не может войти",
+  "assignees": ["developer1"],
+  "labels": ["bug"],
+  "milestone": 2
+}
+
+
+
