@@ -1,0 +1,8 @@
+{
+  "mermaid-editor.preview.zoom": 1.2,
+  "mermaid-editor.theme": "dark",
+  "mermaid-editor.sequenceDiagram.actorFontSize": 16,
+  "mermaid-editor.sequenceDiagram.noteFontSize": 14,
+  "editor.wordWrap": "on",
+  "files.autoSave": "afterDelay"
+}

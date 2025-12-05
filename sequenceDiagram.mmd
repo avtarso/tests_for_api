@@ -1,0 +1,70 @@
+sequenceDiagram
+    participant Manager
+    participant CRM_FRONT
+    participant CRM_BACK
+    participant CRM_DB
+    participant Task_Queue
+    participant Worker
+    participant GitHub
+    participant CRM_ADMIN
+
+    %% Ghtldfhbntkmyst ghbujnjdktybz
+    CRM_BACK->>CRM_FRONT: 0. {pibs, labels, milestone}   
+    Note over CRM_FRONT: На страницу<br/>создания задачи<br/>передаются<br/>необходимые<br/>данные
+
+    %% Основной поток - создание задачи в базе данных CRM
+    Manager->>CRM_FRONT: 1. Manager заполняет форму<br>создания задачи
+    CRM_FRONT->>CRM_BACK: 2. POST /tasks<br/>{manager_id,<br/>project_area, title, task_body,<br/>pib_id, labels, milestone}
+    CRM_BACK->>CRM_DB: 3. Запись задачи
+    CRM_DB-->>CRM_BACK: 4. {title, task_id}
+    CRM_BACK-->>CRM_FRONT: 5. {title, task_id}
+    
+    Note over CRM_FRONT: Пользователь<br/>сразу же<br/>получает ответ
+    
+    CRM_FRONT-->>Manager: 6. "Задача {title} создана"
+    %% Фоновая синхронизация с GitHub
+    CRM_BACK->>Task_Queue: 7. Добавить в очередь sync_github {task_id}
+    Task_Queue->>Worker: 8. Забирает задачу из очереди  {task_id}
+    
+    Worker->>CRM_DB: 9. Получает данные задачи {task_id}
+    CRM_DB-->>Worker: 10. Данные для отправки запроса на GitHub
+    
+    Worker->>GitHub: 11. POST /issues {title, body, labels}
+    
+    alt Успешный ответ
+        GitHub-->>Worker: 12. 201 Created {number: 456, url}
+        Worker->>CRM_DB: 13. Обновляет задачу:<br/>github_issue: 456, status: "synced"
+        CRM_DB-->>Worker: 14. Подтверждение
+        
+        %% UI обновление через WebSocket/поллинг
+        Worker->>CRM_FRONT: 15. WebSocket: sync_complete(123, 456)
+        CRM_FRONT-->>Manager: 16. Иконка меняется с ⚡ на ✅
+    else Ошибка GitHub
+        GitHub-->>Worker: 12. 429 Rate Limit / 500 Error
+        Worker->>CRM_DB: 13. Обновляет задачу:<br/>sync_status: "error",<br/>last_error: "Rate limit",<br/>retry_count: 1
+        
+        %% Retry логика
+        Worker->>Task_Queue: 14. Отложенная повторная попытка (+5 мин)
+        
+        %% Уведомления
+        Worker->>CRM_ADMIN: 15. Уведомление: "Ошибка синхр. 123"
+        Worker->>CRM_FRONT: 16. WebSocket: sync_error(123, "Rate limit")
+        CRM_FRONT-->>Manager: 17. Иконка меняется с ⚡ на ⚠️ 
+    end
+    
+    %% Сценарий проверки статуса менеджероми
+    Manager->>CRM_FRONT: 18. Наводит на иконку ⚡/⚠️/✅
+    CRM_FRONT-->>Manager: 19. Tooltip с текущим статусом
+    
+    Manager->>CRM_FRONT: 20. Кликает на иконку
+    CRM_FRONT->>CRM_BACK: 21. GET /tasks/123/sync-status
+    CRM_BACK->>CRM_DB: 22. Запрос деталей синхронизации
+    CRM_DB-->>CRM_BACK: 23. Данные + timeline + ошибки
+    CRM_BACK-->>CRM_FRONT: 24. Детальная информация
+    CRM_FRONT-->>Manager: 25. Детали создания задачи
+    
+    %% Административное вмешательство
+    CRM_ADMIN->>CRM_BACK: 26. Принудительный (ручной)<br/>повтор задачи 123
+    CRM_BACK->>Task_Queue: 27. Добавить с высоким приоритетом<br/>старую задачу удалить
+    Task_Queue->>Worker: 28. Обработка приоритетной задачи
+    %% Повторяется процесс синхронизации...

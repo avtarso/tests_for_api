@@ -1,0 +1,52 @@
+sequenceDiagram
+    participant Manager
+    participant CRM_FRONT
+    participant CRM_BACK
+    participant CRM_DB
+    participant Task_Queue
+    participant Worker
+    participant GitHub
+    participant CRM_ADMIN
+
+    %% Ghtldfhbntkmyst ghbujnjdktybz
+    CRM_BACK->>CRM_FRONT: 0. {pibs, labels, milestone}   
+    Note over CRM_FRONT: На страницу<br/>создания задачи<br/>передаются<br/>необходимые<br/>данные
+
+    %% Основной поток - создание задачи в базе данных CRM
+    Manager->>CRM_FRONT: 1. Manager заполняет форму<br>создания задачи
+    CRM_FRONT->>CRM_BACK: 2. POST /tasks<br/>{manager_id,<br/>project_area, title, task_body,<br/>pib_id, labels, milestone}
+    CRM_BACK->>CRM_DB: 3. Запись задачи
+    CRM_DB-->>CRM_BACK: 4. {title, task_id}
+    CRM_BACK-->>CRM_FRONT: 5. {title, task_id}
+    
+    Note over CRM_FRONT: Пользователь<br/>сразу же<br/>получает ответ
+    
+    CRM_FRONT-->>Manager: 6. "Задача {title} создана"
+    %% Фоновая синхронизация с GitHub
+    CRM_BACK->>Task_Queue: 7. Добавить в очередь sync_github {task_id}
+    Task_Queue->>Worker: 8. Забирает задачу из очереди  {task_id}
+    
+    Worker->>CRM_BACK: 9. Запрашивает данные задачи {task_id}
+    CRM_BACK-->>CRM_DB: Запрашивает данные для создания задачи
+    CRM_DB->>CRM_BACK: Данные для создания задачи
+    CRM_BACK-->>Worker: 10. Данные для отправки запроса на GitHub
+    
+    Worker->>GitHub: 11. POST /issues {title, body, labels}
+    
+    alt Успешно. 201 Created
+        GitHub-->>Worker: 12. 201 Created {number: 456, url}
+        Worker->>CRM_DB: 13. Обновляет задачу:<br/>github_issue: 456, status: "synced"
+        CRM_DB-->>Worker: 14. Подтверждение
+        
+    else Ошибка. 400, 403, 404, 410, 422 (Bad Request, Forbidden, Gone, Validation failed, or the endpoint has been spammed)
+        GitHub-->>Worker: error_status_code, error_description, error_body
+        Worker->>CRM_ADMIN: Требуется вмешательство<br/>{task_id, error_data} 
+
+    else Ошибка. GitHub недоступен 503
+        GitHub-->>Worker: 12. 503 Service unavailable
+        Worker->>CRM_DB: 13. Обновляет задачу:<br/>sync_status: "retry",<br/>last_error: "Rate limit",<br/>retry_count: +1
+        
+        %% Retry логика
+        Worker->>Task_Queue: 14. Отложенная повторная попытка (+5 мин)
+    end
+    
