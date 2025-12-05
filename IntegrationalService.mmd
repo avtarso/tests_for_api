@@ -4,49 +4,49 @@ sequenceDiagram
     participant SVC as Сервис интеграции
     participant DB as БД Сервиса
     participant GH as GitHub
-    participant Dev as Developer
+    Actor Dev as Developer
 
-    CRM->>SVC: Создать задачу (crm_task_id, crm_payload)
+    CRM->>SVC: Создать задачу (crm_payload)
+    Note right of SVC: CRM не ждёт ответа
     SVC->>DB: Проверить crm_task_id
 
     alt Запись существует
-        DB-->>SVC: issue_id
-        SVC->>GH: PATCH /issues/{issue_id}
-        alt 200 OK
-            GH-->>SVC: OK
-            SVC->>Dev: Обновление задачи в GitHub успешно
-        else Ошибка GitHub
-            GH-->>SVC: Ошибка
-            SVC->>DB: status="failed", last_error
-            SVC->>Dev: Ошибка обновления задачи в GitHub
-        end
+        DB-->>SVC: crm_task_id есть в БД
+        SVC->>Dev: Email + Telegram: Неправильный метод редактирования задачи или попытка создать задачу с существующим {crm_task_id}
 
     else Нет записи — создаём новую задачу
         DB-->>SVC: not found
         SVC->>DB: INSERT status="pending", retry_count=0
 
         loop Попытка синхронизации (до 3 раз)
+            Note right of SVC: Попытка создания
+            SVC->>DB: Запрос данных для github_payload (crm_payload)
+            DB-->>SVC: данные для формирования github_payload
             SVC->>GH: POST /issues (github_payload)
 
             alt 201 Created
-                GH-->>SVC: issue_number
-                SVC->>DB: status="synced", issue_number
-                SVC->>Dev: Задача создана в GitHub
+                GH-->>SVC: number
+                Note right of GH: 201 Ok
+                SVC->>DB: status="synced", github_issue_number=number, comment="201 Ok"
+                SVC->>Dev: Telegram: Задача {crm_task_id} создана в GitHub
 
             else 503 Service Unavailable
                 GH-->>SVC: 503
+                Note right of GH: 503
                 SVC->>DB: retry_count++, status="retry"
                 alt retry_count < 3
                     SVC->>SVC: Перенос повторной попытки
+                    Note right of SVC: Пауза 5 минут
                 else retry_count >= 3
-                    SVC->>DB: status="final_error", last_error=503
-                    SVC->>Dev: GitHub недоступен, задача не создана
+                    SVC->>DB: status="final_error", comment="503 + Текст ошибки"
+                    Note left of Dev: Попытки<br />закончились
+                    SVC->>Dev: Email + Telegram: GitHub недоступен {crm_task_id}, задача не создана
                 end
             else Критические ошибки (400,403,404,410,422)
+                Note left of Dev: Неустранимая<br />ошибка
                 GH-->>SVC: Ошибка
-                SVC->>DB: status="final_error", last_error
-                SVC->>Dev: Ошибка создания задачи в GitHub<br/>Текст ошибки
-
+                SVC->>DB: status="final_error", comment="Код + Текст ошибки"
+                SVC->>Dev: Email + Telegram: Ошибка создания задачи {crm_task_id} в GitHub<br/>Текст ошибки
             end
         end
     end

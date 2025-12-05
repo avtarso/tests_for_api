@@ -1,5 +1,5 @@
 developers
-developer_id | github_login | full_name 
+developer_id | github_login | full_name | email | telegram
 
 managers
 manager_id | gitHub_token | full_name
@@ -12,4 +12,7 @@ crm_area_id | repo_id
 
 repo_devs
 repo_id | developer_id
+
+issues
+crm_task_id | github_issue_number | timestamp | retry_count | status | comment
 

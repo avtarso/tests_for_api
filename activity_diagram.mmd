@@ -1,0 +1,33 @@
+flowchart TD
+    %% Начало процесса
+    A["CRM создаёт задачу - crm_payload"] --> B["Сервис интеграции получает payload"]
+
+    %% Проверка в БД
+    B --> C{"crm_task_id есть в БД?"}
+    C -- "Да" --> D["Отправить Dev уведомление - задача уже существует"]
+    C -- "Нет" --> E["Создать запись в DB - status='pending', retry_count=0"]
+
+    %% Основной цикл синхронизации
+    E --> F["Попытка создания GitHub issue"]
+    F --> G["Сформировать github_payload из crm_payload"]
+    G --> H["POST /issues в GitHub"]
+
+    %% Ответ от GitHub
+    H --> I{"Статус ответа?"}
+    I -- "201 Created" --> J["status='synced', сохранить github_issue_number"]
+    J --> K["Отправить Dev уведомление - задача создана в GitHub"]
+
+    I -- "503 Service Unavailable" --> L["retry_count++, status='retry'"]
+    L --> M{"retry_count < 3?"}
+    M -- "Да" --> N["Асинхронная пауза 5 минут"] --> F
+    M -- "Нет" --> O["status='final_error', сохранить текст ошибки"]
+    O --> P["Уведомить Dev - GitHub недоступен, задача не создана"]
+
+    I -- "Критическая ошибка (400,403,404,410,422)" --> Q["status='final_error', сохранить текст ошибки"]
+    Q --> R["Уведомить Dev - ошибка создания задачи в GitHub"]
+
+    %% Конец процесса
+    K --> S["Конец"]
+    D --> S
+    P --> S
+    R --> S

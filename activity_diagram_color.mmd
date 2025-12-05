@@ -1,0 +1,38 @@
+flowchart TD
+    %% Начало процесса
+    A["CRM создаёт задачу - crm_payload"] --> B["Сервис интеграции получает payload"]
+
+    %% Проверка в БД
+    B --> C{"crm_task_id есть в БД?"}
+    C -- "Да" --> D["Отправить Dev уведомление - задача уже существует"]
+    D:::red --> S["Конец"]
+
+    C -- "Нет" --> E["Создать запись в DB - status='pending', retry_count=0"]
+
+    %% Основной цикл синхронизации
+    E --> F["Попытка создания GitHub issue"]
+    F --> G["Сформировать github_payload из crm_payload"]
+    G --> H["POST /issues в GitHub"]
+
+    %% Ответ от GitHub
+    H --> I{"Статус ответа?"}
+    I -- "201 Created" --> J["status='synced', сохранить github_issue_number"]
+    J:::green --> K["Отправить Dev уведомление - задача создана в GitHub"]
+    K:::green --> S
+
+    I -- "503 Service Unavailable" --> L["retry_count++, status='retry'"]
+    L:::yellow --> M{"retry_count < 3?"}
+    M -- "Да" --> N["Асинхронная пауза 5 минут"] --> F
+    N:::yellow
+    M -- "Нет" --> O["status='final_error', сохранить текст ошибки"]
+    O:::red --> P["Уведомить Dev - GitHub недоступен, задача не создана"]
+    P:::red --> S
+
+    I -- "Критическая ошибка (400,403,404,410,422)" --> Q["status='final_error', сохранить текст ошибки"]
+    Q:::red --> R["Уведомить Dev - ошибка создания задачи в GitHub"]
+    R:::red --> S
+
+    %% Стили
+    classDef green fill:#c8f7c5,stroke:#3c763d,color:#000;
+    classDef yellow fill:#fff3cd,stroke:#856404,color:#000;
+    classDef red fill:#f8d7da,stroke:#721c24,color:#000;
